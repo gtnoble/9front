@@ -17,7 +17,7 @@ ssh \- secure shell remote login client
 ] [
 .B -h
 ] [
-.IR user @] host
+.IR user @]host[!port]
 [
 .B -W
 .I remote!port
@@ -51,6 +51,17 @@ The
 .I thumbfile
 location can be changed with the
 .B -t
+option.
+.PP
+The destination
+.I host
+can also be specified with an optional
+.IR !port
+suffix to connect to a specific port or service name on the remote host.
+If no port is specified, it defaults to the standard IANA assigned port for ssh (22)
+or the port specified by a local services file for the ``ssh'' service.
+This syntax is similar to the one used by the
+.B -W
 option.
 .PP
 When

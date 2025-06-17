@@ -1168,7 +1168,7 @@ kfmt(Fmt *f)
 void
 usage(void)
 {
-	fprint(2, "usage: %s [-drRX] [-t thumbfile] [-T tries] [-u user] [-h] [user@]host [-W remote!port] [cmd args...]\n", argv0);
+	fprint(2, "usage: %s [-drRX] [-t thumbfile] [-T tries] [-u user] [-h] [user@]host[!port] [-W remote!port] [cmd args...]\n", argv0);
 	exits("usage");
 }
 
@@ -1184,6 +1184,8 @@ main(int argc, char *argv[])
 	fmtinstall('H', encodefmt);
 	fmtinstall('[', encodefmt);
 	fmtinstall('k', kfmt);
+
+	char *dialservice = "ssh"; // Default service for dialing
 
 	tty.gen = -1;
 	tty.term = getenv("TERM");
@@ -1263,7 +1265,14 @@ main(int argc, char *argv[])
 	if(remote != nil && cmd != nil)
 		usage();
 
-	if((fd = dial(netmkaddr(host, nil, "ssh"), nil, nil, nil)) < 0)
+	// Parse port from host if specified as host!port
+	s = strrchr(host, '!');
+	if(s != nil && s != host){ // Check if '!' exists and is not the first character
+		*s++ = '\0';       // Null-terminate the hostname part
+		dialservice = s;   // The part after '!' is the service/port
+	}
+
+	if((fd = dial(netmkaddr(host, nil, dialservice), nil, nil, nil)) < 0)
 		sysfatal("dial: %r");
 
 	send.v = "SSH-2.0-(9)";
