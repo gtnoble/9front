@@ -663,6 +663,10 @@ authfailure(char *meth)
 		sysfatal("bad auth failure response");
 	free(authnext);
 	authnext = smprint("%.*s", utfnlen(s, n), s);
+	
+	/* Include server's available methods in error message */
+	werrstr("%s authentication failed (server allows: %s)", meth, authnext);
+	
 if(debug)
 	fprint(2, "userauth %s failed: partial=%d, next=%s\n", meth, partial, authnext);
 	return partial != 0 || !authok(meth);
@@ -711,15 +715,21 @@ pubkeyauth(void)
 	if(!authok(authmeth))
 		return -1;
 
-	if((afd = open("/mnt/factotum/rpc", ORDWR)) < 0)
+	if((afd = open("/mnt/factotum/rpc", ORDWR)) < 0){
+		werrstr("public key authentication failed: cannot access factotum (/mnt/factotum/rpc: %r)");
 		return -1;
+	}
 	if((rpc = auth_allocrpc(afd)) == nil){
+		werrstr("public key authentication failed: factotum RPC allocation failed");
 		close(afd);
 		return -1;
 	}
 
 	s = "proto=rsa service=ssh role=client";
 	if(auth_rpc(rpc, "start", s, strlen(s)) != ARok){
+		werrstr("public key authentication failed: factotum protocol error (%s)", rpc->arg ? rpc->arg : "unknown");
+		if(debug)
+			fprint(2, "hint: check factotum has RSA keys for SSH\n");
 		auth_freerpc(rpc);
 		close(afd);
 		return -1;
@@ -729,14 +739,23 @@ pubkeyauth(void)
 	pub->n = mpnew(0);
 	pub->ek = mpnew(0);
 
+	int key_count = 0;
+	int keys_tried = 0;
+
 	while(auth_rpc(rpc, "read", nil, 0) == ARok){
 		s = rpc->arg;
+		key_count++;
 		if(strtomp(s, &s, 16, pub->n) == nil)
 			break;
 		if(*s++ != ' ')
 			continue;
 		if(strtomp(s, nil, 16, pub->ek) == nil)
 			continue;
+		
+		keys_tried++;
+		if(debug)
+			fprint(2, "trying RSA key %d\n", keys_tried);
+		
 		npk = rsapub2ssh(pub, pk, sizeof(pk));
 
 		sendpkt("bsssbss", MSG_USERAUTH_REQUEST,
@@ -807,6 +826,23 @@ Next2:		switch(recvpkt()){
 		close(afd);
 		return 0;
 	}
+
+	/* Check if we found any keys at all */
+	if(key_count == 0){
+		werrstr("public key authentication failed: no RSA keys found in factotum");
+		goto Failed;
+	}
+
+	/* Check if we had valid keys but none worked */
+	if(keys_tried == 0){
+		werrstr("public key authentication failed: no valid RSA keys in factotum (%d keys found but malformed)", key_count);
+		goto Failed;
+	}
+
+	/* If we get here, we tried keys but server rejected them all */
+	werrstr("public key authentication failed: server rejected all %d RSA keys (server allows: %s)", 
+	        keys_tried, authnext ? authnext : "unknown");
+
 Failed:
 	rsapubfree(pub);
 	auth_freerpc(rpc);
@@ -979,8 +1015,10 @@ dispatch(void)
 	case MSG_DEBUG:
 		if(unpack(recv.r, recv.w-recv.r, "__sb", &s, &n, &c) < 0)
 			break;
-		if(c != 0 || debug)
-			fprint(2, "%s: %.*s\n", argv0, utfnlen(s, n), s);
+		/* Show auth-related debug messages even without -d flag */
+		if(strstr(s, "auth") || strstr(s, "key") || strstr(s, "password") || 
+		   strstr(s, "login") || strstr(s, "user") || c != 0 || debug)
+			fprint(2, "%s: server: %.*s\n", argv0, utfnlen(s, n), s);
 		return;
 	case MSG_USERAUTH_BANNER:
 		if(unpack(recv.r, recv.w-recv.r, "_s", &s, &n) < 0)
